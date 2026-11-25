@@ -12,7 +12,7 @@ from pathlib import Path
 from typing import Any, Callable, Iterator
 from uuid import uuid4
 
-from .client import ChatClient
+from .client import ChatClient, DEFAULT_OPENAI_MODEL
 from .experiment import EXPERIMENT_PROMPT, EXPERIMENT_SCHEMA, normalize_experiments
 from .knowledge import KNOWLEDGE_PROMPT, normalize_knowledge
 from .pdf import PDFExtractionError, extract_pdf
@@ -48,7 +48,7 @@ def _pdfs(source: Path) -> list[Path]:
     return []
 
 
-def _ground(memories: list[dict], doc: Any, chunk: Any, model: str) -> list[dict]:
+def _ground(memories: list[dict], doc: Any, chunk: Any, model: str, provider: str) -> list[dict]:
     grounded = []
     for memory in memories:
         quote = memory["evidence"]
@@ -66,13 +66,14 @@ def _ground(memories: list[dict], doc: Any, chunk: Any, model: str) -> list[dict
                        "page": chunk.page_start, "chunk_id": chunk.chunk_id,
                        "page_char_start": page_start, "page_char_end": page_start + len(quote),
                        "quote": quote},
-            "extraction": {"model": model},
+            "extraction": {"provider": provider, "model": model},
         })
     return grounded
 
 
 def run(source: str | Path, output_dir: str | Path = "memory-output", *,
-        model: str = "gpt-4o-mini", types: tuple[str, ...] = ("knowledge", "experiment"),
+        model: str | None = None, provider: str | None = None, env_file: str | Path | None = None,
+        types: tuple[str, ...] = ("knowledge", "experiment"),
         client: Any = None, chunk_size: int = 10000, chunk_overlap: int = 1000,
         parse_only: bool = False, on_progress: Callable[[dict[str, Any]], None] | None = None) -> dict[str, Any]:
     """Extract from a PDF or recursively from a folder.
@@ -89,8 +90,20 @@ def run(source: str | Path, output_dir: str | Path = "memory-output", *,
     pdfs = _pdfs(Path(source))
     if not pdfs:
         raise ValueError(f"No PDF files found in {source}")
-    if not parse_only and client is None:
-        client = ChatClient()
+    if not parse_only:
+        if client is None:
+            client = ChatClient(provider=provider, model=model, env_file=env_file)
+        elif provider is not None or env_file is not None:
+            raise ValueError("Configure the injected client directly, or omit client to use provider/env_file.")
+        if isinstance(client, ChatClient):
+            provider = client.provider
+            model = model or client.model
+        else:
+            provider = "custom"
+            model = model or DEFAULT_OPENAI_MODEL
+        endpoint = getattr(client, "base_url", type(client).__module__ + "." + type(client).__qualname__)
+        # Keep keys for pre-provider OpenAI and injected clients so existing caches still work.
+        cache_endpoint = [provider, endpoint] if provider in {"qwen", "compatible"} else endpoint
     output = Path(output_dir)
     output.mkdir(parents=True, exist_ok=True)
     run_id = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ") + "-" + uuid4().hex[:8]
@@ -121,13 +134,12 @@ def run(source: str | Path, output_dir: str | Path = "memory-output", *,
                     continue
                 for kind in selected:
                     prompt, normalize = PROMPTS[kind]
-                    endpoint = getattr(client, "base_url", type(client).__module__ + "." + type(client).__qualname__)
-                    key = _hash(json.dumps(["v1", doc.document_id, chunk.chunk_id, kind, model, endpoint, prompt], ensure_ascii=False))
+                    key = _hash(json.dumps(["v1", doc.document_id, chunk.chunk_id, kind, model, cache_endpoint, prompt], ensure_ascii=False))
                     try:
                         row = connection.execute("SELECT payload FROM results WHERE cache_key = ?", (key,)).fetchone()
                         if row:
                             try:
-                                memories = _ground(normalize(json.loads(row[0])), doc, chunk, model)
+                                memories = _ground(normalize(json.loads(row[0])), doc, chunk, model, provider)
                             except (ValueError, KeyError, TypeError):
                                 connection.execute("DELETE FROM results WHERE cache_key = ?", (key,))
                                 connection.commit()
@@ -137,7 +149,7 @@ def run(source: str | Path, output_dir: str | Path = "memory-output", *,
                         if not row:
                             calls += 1
                             payload = client.complete(model=model, system=prompt, text=chunk.text)
-                            memories = _ground(normalize(payload), doc, chunk, model)
+                            memories = _ground(normalize(payload), doc, chunk, model, provider)
                             connection.execute("INSERT OR REPLACE INTO results VALUES (?, ?)", (key, json.dumps(payload, ensure_ascii=False)))
                             connection.commit()
                         for memory in memories:
@@ -166,7 +178,8 @@ def run(source: str | Path, output_dir: str | Path = "memory-output", *,
                "input_pdf_count": len(pdfs), "documents": len(documents), "chunks": len(chunks),
                "knowledge": len(results["knowledge"]), "experiment": len(results["experiment"]),
                "errors": len(errors), "model_calls": calls, "cached_calls": cached,
-               "model": None if parse_only else model, "types": list(selected), "run_dir": str(snapshot)}
+               "provider": None if parse_only else provider, "model": None if parse_only else model,
+               "types": list(selected), "run_dir": str(snapshot)}
     _write_jsonl(snapshot / "manifest.jsonl", [summary])
     return summary
 

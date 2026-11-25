@@ -9,7 +9,7 @@ Every accepted memory includes a quotation that must occur verbatim in the extra
 
 ## Quick start
 
-Requirements: Python 3.10 or newer, PDFs with a text layer, and an OpenAI-compatible chat-completions API for extraction. The default model is `gpt-4o-mini`; choose a model available from your provider. Extraction sends paper text to that provider, so check that you are permitted to share the documents.
+Use Python 3.10 or newer and PDFs with a text layer. Extraction sends paper text to the model provider you configure.
 
 ```bash
 git clone https://github.com/JIAYI0012/pdf2mem.git
@@ -17,15 +17,36 @@ cd pdf2mem
 python -m venv .venv
 source .venv/bin/activate
 python -m pip install -e .
+cp .env.example .env
+```
 
-export OPENAI_API_KEY='your-api-key'
-# Optional: an OpenAI-compatible API base URL ending in /v1.
-# export OPENAI_BASE_URL='https://your-provider.example/v1'
+Open the local `.env` in an editor, set `PDF2MEM_PROVIDER` to the provider you want, and fill in its settings below. For Qwen, set `PDF2MEM_PROVIDER=qwen`, enter your key in `DASHSCOPE_API_KEY`, and copy your workspace's OpenAI-compatible base URL from the Model Studio console into `QWEN_BASE_URL`. The repository ignores `.env`. On Windows, activate the environment with `.venv\Scripts\activate` and copy the template with `copy .env.example .env`.
 
+```bash
 pdf-memory papers/ --output output/
 ```
 
-On Windows, activate with `.venv\Scripts\activate` and set the environment variable using your shell's syntax. A directory input is searched recursively for `.pdf` files; a single PDF path works too. The program writes a JSON summary to standard output. API requests, model availability, and billing depend on the selected provider.
+A directory input is searched recursively for PDFs. A single PDF path works too. The program writes a JSON summary to standard output.
+
+## Choosing a model provider
+
+| `PDF2MEM_PROVIDER` | Key in the local environment | Model setting | API base URL setting |
+| --- | --- | --- | --- |
+| `openai` (default) | `OPENAI_API_KEY` | `OPENAI_MODEL`, default `gpt-4o-mini` | `OPENAI_BASE_URL`, defaults to the OpenAI API |
+| `qwen` (Alibaba Cloud Model Studio) | `DASHSCOPE_API_KEY` | `QWEN_MODEL`, default `qwen-plus` | Set `QWEN_BASE_URL` to the base URL for your workspace and region |
+| `compatible` (another compatible service) | `COMPATIBLE_API_KEY` if required by the service | Set `COMPATIBLE_MODEL` or pass `--model` | Set `COMPATIBLE_BASE_URL` to the service's API base |
+
+The service and model must support Chat Completions with JSON output. Supply the API base URL without the final `/chat/completions` path. The Qwen preset requests non-thinking mode (`enable_thinking=false`) for structured extraction. [Alibaba Cloud endpoint guide](https://www.alibabacloud.com/help/en/model-studio/compatibility-of-openai-with-dashscope) · [Supported JSON output models](https://www.alibabacloud.com/help/en/model-studio/qwen-structured-output)
+
+By default, the CLI and Python API look for `.env` in the **current working directory**. The deployment's environment variables take precedence over values in that file. An explicit provider or model argument overrides the corresponding setting for one run. You can keep both providers' credentials in the same local file and switch with a single argument.
+
+```bash
+pdf-memory papers/ --provider qwen -o output/
+pdf-memory paper.pdf --provider openai --model gpt-4o-mini -o output/
+pdf-memory paper.pdf --env-file /etc/pdf2mem/settings.env -o output/
+```
+
+**中文配置示例。** 在部署目录复制 `.env.example` 为 `.env`，用编辑器设置 `PDF2MEM_PROVIDER=qwen`，填写 `DASHSCOPE_API_KEY`，并将阿里云百炼控制台中对应工作空间和地域的 OpenAI 兼容地址填入 `QWEN_BASE_URL`（去掉末尾的 `/chat/completions`）。保存后运行 `pdf-memory paper.pdf` 即可用通义千问抽取。若也已配置 OpenAI 的密钥，单次切换可用 `pdf-memory paper.pdf --provider openai`。从其他目录或服务进程启动时，可通过 `--env-file` 指定配置文件的绝对路径。
 
 Inspect extracted text first without an API key or model calls:
 
@@ -36,7 +57,7 @@ pdf-memory paper.pdf --output parsed/ --parse-only
 Useful options:
 
 ```bash
-pdf-memory paper.pdf -o output/ --type knowledge --model gpt-4o-mini
+pdf-memory paper.pdf -o output/ --type knowledge
 pdf-memory papers/ -o output/ --type experiment --chunk-size 10000 --chunk-overlap 1000
 pdf-memory --help
 ```
@@ -54,7 +75,7 @@ Each run writes UTF-8 JSON Lines files to its own `output/runs/<run-id>/` snapsh
 | `documents.jsonl` | Document ID, filename, available PDF metadata, empty physical page numbers, and chunk count. |
 | `chunks.jsonl` | Extracted chunk text, page, and page-relative character offsets. |
 | `errors.jsonl` | PDF or per-chunk extraction failures, with available document, page and chunk context. |
-| `manifest.jsonl` | One summary record with counts, status, model, and selected types. |
+| `manifest.jsonl` | One summary record with counts, status, provider, model, and selected types. |
 | `output/cache.sqlite3` | Shared, resumable successful model responses across runs; see below. |
 
 Memory records have this common structure (values are illustrative):
@@ -76,7 +97,7 @@ Memory records have this common structure (values are illustrative):
     "page_char_end": 157,
     "quote": "The ligand may stabilize the cluster."
   },
-  "extraction": {"model": "gpt-4o-mini"}
+  "extraction": {"provider": "openai", "model": "gpt-4o-mini"}
 }
 ```
 
@@ -95,12 +116,13 @@ Successful chunk/type model responses are cached in `output/cache.sqlite3`. Reru
 ```python
 from pdf_to_agent_memory import iter_memories, run
 
-summary = run("papers/", "output/", model="gpt-4o-mini",
-              types=("knowledge", "experiment"))
+summary = run("papers/", "output/", types=("knowledge", "experiment"))
 print(summary)
 for memory in iter_memories(summary["run_dir"], "knowledge"):
     print(memory["statement"], memory["source"]["quote"])
 ```
+
+The same settings apply when an agent calls `run()`. To override the provider and deployment file for one call, use `run("paper.pdf", "output/", provider="qwen", env_file="/etc/pdf2mem/settings.env")`. Pass `model="..."` to select a different model supported by that provider.
 
 A custom client may be injected. It must implement `complete(*, model, system, text) -> dict` and return the response object expected by the prompt. For example, this no-network stub returns no memories and is useful for exercising an integration:
 

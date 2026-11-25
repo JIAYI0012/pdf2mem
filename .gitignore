@@ -6,6 +6,9 @@ __pycache__/
 build/
 dist/
 .env
+*.env
+.env.*
+!.env.example
 *.pdf
 memory-output/
 *.sqlite3
