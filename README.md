@@ -132,19 +132,3 @@ For extraction without an API call, `run("paper.pdf", "parsed/", parse_only=True
 python -m pip install -e '.[test]'
 python -m pytest
 ```
-
-## 中文快速使用
-
-本项目从论文 PDF 提取两类可供 agent 使用的记忆：**knowledge**（知识、原理、假设、机理等）和 **experiment**（实验步骤、表征、测量、结果等）。每条记录保留可在抽取文本中定位的原文、页码及偏移量。
-
-安装 Python 3.10 及以上，进入本项目目录后执行：
-
-```bash
-python -m pip install -e .
-export OPENAI_API_KEY='你的密钥'
-pdf-memory 论文目录/ -o 结果目录/
-```
-
-可将论文目录换成单个 PDF。仅检查 PDF 文本、无需调用模型时使用 `pdf-memory 论文.pdf -o 解析结果/ --parse-only`。每次运行在 `结果目录/runs/<run-id>/` 中生成独立结果，摘要的 `run_dir` 给出具体路径；其中 `knowledge.jsonl` 和 `experiment.jsonl` 为抽取结果，`errors.jsonl` 为处理失败信息。使用同一个输出目录重跑可复用成功的调用并重试失败项，之前的运行结果会保留。
-
-程序不支持 OCR，模型生成内容需要对照论文人工核实。原文匹配只能证明引用存在，不能证明结论正确；调用模型时论文文本会发送给所配置的 API 服务商。
