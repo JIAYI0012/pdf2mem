@@ -46,7 +46,6 @@ pdf-memory paper.pdf --provider openai --model gpt-4o-mini -o output/
 pdf-memory paper.pdf --env-file /etc/pdf2mem/settings.env -o output/
 ```
 
-**中文配置示例。** 在部署目录复制 `.env.example` 为 `.env`，用编辑器设置 `PDF2MEM_PROVIDER=qwen`，填写 `DASHSCOPE_API_KEY`，并将阿里云百炼控制台中对应工作空间和地域的 OpenAI 兼容地址填入 `QWEN_BASE_URL`（去掉末尾的 `/chat/completions`）。保存后运行 `pdf-memory paper.pdf` 即可用通义千问抽取。若也已配置 OpenAI 的密钥，单次切换可用 `pdf-memory paper.pdf --provider openai`。从其他目录或服务进程启动时，可通过 `--env-file` 指定配置文件的绝对路径。
 
 Inspect extracted text first without an API key or model calls:
 
